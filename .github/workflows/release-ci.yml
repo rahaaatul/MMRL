@@ -44,7 +44,7 @@ jobs:
         flavor: [official, spoofed]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -60,6 +60,10 @@ jobs:
           keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
           keyAlias: ${{ secrets.KEY_ALIAS }}
           keyPassword: ${{ secrets.KEY_PASSWORD }}
+          # The two matrix legs share one Gradle cache key. Only the
+          # primary leg (official) writes; spoofed restores but never
+          # saves, avoiding a parallel-write race on the same entry.
+          cacheReadOnly: ${{ matrix.flavor != 'official' }}
 
   # Release to Telegram
   release-telegram:
@@ -85,7 +89,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -109,13 +113,13 @@ jobs:
           } >> gradle.properties
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
-          distribution: "zulu"
+          distribution: "temurin"
           java-version: 21
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           validate-wrappers: true
 

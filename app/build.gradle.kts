@@ -252,7 +252,8 @@ dependencies {
     implementation(libs.multiplatform.markdown.renderer.m3)
     implementation(libs.multiplatform.markdown.renderer.android)
     implementation(libs.multiplatform.markdown.renderer.coil3)
-    implementation(libs.androidx.multidex)
+    // (androidx.multidex was removed: minSdk is 26 and no MultiDexApplication
+    // or attachMultiDex() is used, so the multidex library is dead weight.)
     implementation(libs.dev.rikka.rikkax.parcelablelist)
     implementation(libs.lib.zoomable)
     implementation(libs.process.phoenix)

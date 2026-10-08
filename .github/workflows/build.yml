@@ -1,0 +1,118 @@
+name: Daily APK Build
+
+# Build the official and spoofed release APKs every day at 00:00 UTC.
+# The schedule is best-effort: GitHub queues scheduled runs, so treat the
+# build time as a request, not a precise timer. Keep it off the top of the
+# hour to avoid the shared-queue stampede (midnight UTC is quiet).
+#
+# Also exposes a manual trigger so the job can be tested or re-run without
+# waiting for the schedule. Scheduled workflows only run on the default
+# branch and are auto-disabled after 60 days of repository inactivity, so
+# treat this as an operational commitment, not dead config.
+#
+# Code shrinking: the release build type is configured with R8
+# (isMinifyEnabled=true, isShrinkResources=true, and the optimized default
+# file proguard-android-optimize.txt), so the built APK is minified by R8
+# and obfuscated with ProGuard rules. The "Verify APK is R8-minified"
+# step below fails the run if either is ever disabled.
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+# A daily refresh job should never overlap itself; if a run is queued while
+# another is still building, cancel the older one rather than stacking them.
+concurrency:
+  group: daily-apk
+  cancel-in-progress: true
+
+# Gradle toolchain caching: `setup-gradle` restores and saves the Gradle
+# User Home (downloaded dependencies, wrapper distribution, compiled build
+# scripts, local build cache) automatically. Cache writes only happen for
+# jobs on the default branch, so the daily schedule keeps the cache warm.
+# The matrix legs share one cache key; only the first leg writes to avoid
+# a parallel-write race.
+jobs:
+  build-apk:
+    name: Build ${{ matrix.flavor }}-${{ matrix.buildType }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [official, spoofed]
+        buildType: [release, debug]
+    steps:
+      # A local composite action must be loadable from the workspace, so the
+      # repository has to be checked out BEFORE the `uses: ./.github/...`
+      # step. The composite action's own internal checkout only runs once the
+      # action is already loaded, so it cannot substitute for this.
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Build APK
+        id: build-apk
+        uses: ./.github/actions/build-apk
+        with:
+          username: ${{ secrets.ACTOR }}
+          token: ${{ secrets.GH_TOKEN }}
+          flavor: ${{ matrix.flavor }}
+          buildType: ${{ matrix.buildType }}
+          keyStore: ${{ secrets.KEY_STORE }}
+          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
+          keyAlias: ${{ secrets.KEY_ALIAS }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+          # The matrix has multiple legs writing to the same Gradle
+          # cache key. Only the first leg writes; others restore read-only
+          # to avoid a parallel-write race.
+          cacheReadOnly: ${{ matrix.flavor != 'official' || matrix.buildType != 'release' }}
+
+      - name: Summarize built APK
+        shell: bash
+        run: |
+          echo "Flavor: ${{ matrix.flavor }}"
+          echo "Build type: ${{ matrix.buildType }}"
+          echo "APK path: ${{ steps.build-apk.outputs.path }}"
+          echo "APK name: ${{ steps.build-apk.outputs.name }}"
+
+      # Guard against a release build silently shipping unminified or
+      # debuggable code. The release build type is configured with R8
+      # (isMinifyEnabled=true + proguard-android-optimize.txt), so a
+      # missing mapping file or a debuggable APK means the CI must fail.
+      # Only run this verification for release builds.
+      - name: Verify APK is R8-minified and not debuggable
+        if: ${{ matrix.buildType == 'release' }}
+        shell: bash
+        run: |
+          APK_PATH="${{ steps.build-apk.outputs.path }}"
+          MAPPING_PATH="${{ steps.build-apk.outputs.mapping }}"
+
+          if [ ! -f "$APK_PATH" ]; then
+            echo "APK not found at $APK_PATH" >&2
+            exit 1
+          fi
+
+          if [ ! -f "$MAPPING_PATH" ]; then
+            echo "R8 mapping file missing at $MAPPING_PATH — build was not minified" >&2
+            exit 1
+          fi
+
+          if unzip -l "$APK_PATH" | grep -q "classes.dex"; then
+            echo "classes.dex present (R8 produced DEX)"
+          else
+            echo "No classes.dex in APK — R8 did not run" >&2
+            exit 1
+          fi
+
+          DEBUGGABLE=$(apkanalyzer manifest debuggable "$APK_PATH" 2>/dev/null | tr -d '[:space:]')
+          if [ "$DEBUGGABLE" = "true" ]; then
+            echo "APK is debuggable — release build misconfigured" >&2
+            exit 1
+          fi
+          echo "Verified: APK is minified by R8 and not debuggable."

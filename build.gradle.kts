@@ -10,6 +10,6 @@ plugins {
     alias(libs.plugins.jetbrains.kotlin.android) apply false
 }
 
-task<Delete>("clean") {
+tasks.register<Delete>("clean") {
     delete(layout.buildDirectory)
 }
