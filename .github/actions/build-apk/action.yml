@@ -51,6 +51,8 @@ runs:
         echo "BUILD_TYPE_CAPITALIZED=${BUILD_TYPE^}" >> $GITHUB_ENV
         echo "BUILD_TYPE_LOWERCASE=${BUILD_TYPE,,}" >> $GITHUB_ENV
         echo "BUILD_COMMAND=${FLAVOR^}${BUILD_TYPE^}" >> $GITHUB_ENV
+        echo "ACTOR=${{ inputs.username }}" >> $GITHUB_ENV
+        echo "GH_TOKEN=${{ inputs.token }}" >> $GITHUB_ENV
 
     - name: Checkout
       uses: actions/checkout@v7
